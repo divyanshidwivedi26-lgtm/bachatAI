@@ -1,0 +1,5 @@
+{
+  "name": "BachatAI: Personal Shopping Agent",
+  "description": "An AI-powered shopping assistant for India that compares prices across Amazon, Flipkart, Blinkit, and more, with smart alerts and reminders.",
+  "requestFramePermissions": ["geolocation"]
+}
