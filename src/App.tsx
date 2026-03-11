@@ -27,6 +27,7 @@ interface Product {
   rating: number;
   image: string;
   link: string;
+  isReal?: boolean;
 }
 
 interface Alert {
@@ -72,15 +73,24 @@ export default function App() {
     setLoading(true);
     setAiInsight(null);
     try {
+      // 1. Initial quick mock results
       const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
-      const data = await res.json();
-      setResults(data);
+      const mockData = await res.json();
+      setResults(mockData);
 
-      // Get AI Insight with Google Search Grounding
-      const prompt = `User is looking for "${query}" in India. Here are the simulated prices: ${data.map((p: Product) => `${p.platform}: ₹${p.price}`).join(', ')}. 
-      1. Use Google Search to find the ACTUAL current best price and platform for "${query}" in India right now.
-      2. Provide a very brief (1-2 sentences) smart shopping advice. Mention if the simulated prices are realistic and where the absolute best deal is currently.
-      3. If there's a specific coupon or bank offer available today, mention it.`;
+      // 2. Fetch REAL-TIME data using Gemini + Google Search
+      const prompt = `Find the current real-time prices and direct product image URLs for "${query}" in India on these platforms: Amazon.in, Flipkart, Myntra, Ajio, Zomato, Swiggy, and Blinkit. 
+      Return ONLY a JSON array of objects. 
+      Each object must have: 
+      - "platform": (e.g., "Amazon", "Flipkart", "Myntra", "Ajio", "Zomato", "Swiggy", "Blinkit")
+      - "price": (number, the actual current price in INR)
+      - "link": (MANDATORY: Provide the actual search URL for this platform if a direct product link is not found. Example: https://www.amazon.in/s?k=${encodeURIComponent(query)})
+      - "image": (MANDATORY: A valid, high-quality image URL that matches "${query}" exactly. Use https://source.unsplash.com/featured/?${encodeURIComponent(query)} as a fallback)
+      - "delivery": (estimated delivery time or fee)
+      - "rating": (number, e.g. 4.5)
+      - "name": (the exact product name found)
+
+      CRITICAL: The links MUST work and lead to the search results or product on the respective Indian app/website. Do not use markdown formatting.`;
       
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
@@ -89,7 +99,35 @@ export default function App() {
           tools: [{ googleSearch: {} }]
         }
       });
-      setAiInsight(response.text);
+
+      const text = response.text;
+      try {
+        // Extract JSON from text (in case model adds conversational filler)
+        const jsonMatch = text.match(/\[[\s\S]*\]/);
+        if (jsonMatch) {
+          const realData = JSON.parse(jsonMatch[0]);
+          if (Array.isArray(realData) && realData.length > 0) {
+            // Merge or replace mock data with real data
+            const formattedRealData = realData.map((p: any, i: number) => ({
+              ...p,
+              id: `real-${p.platform}-${i}`,
+              isReal: true
+            }));
+            setResults(formattedRealData);
+          }
+        }
+      } catch (parseErr) {
+        console.error("Failed to parse real-time data", parseErr);
+      }
+
+      // 3. Get AI Insight separately for better UX
+      const insightPrompt = `Based on the search for "${query}" in India, provide a 1-sentence smart shopping advice. Mention any specific deal or if the user should wait.`;
+      const insightResponse = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: insightPrompt,
+        config: { tools: [{ googleSearch: {} }] }
+      });
+      setAiInsight(insightResponse.text);
 
     } catch (err) {
       console.error("Search failed", err);
@@ -187,7 +225,7 @@ export default function App() {
 
           {/* Quick Suggestions */}
           <div className="flex gap-2 mt-4 overflow-x-auto pb-2 no-scrollbar">
-            {['Biryani', 'Pizza', 'Basmati Rice', 'iPhone 15', 'Milk 1L', 'Nike Shoes', 'Atta 5kg', 'Burgers'].map(tag => (
+            {['Biryani', 'Pizza', 'Jeans', 'T-Shirt', 'Basmati Rice', 'iPhone 15', 'Milk 1L', 'Nike Shoes', 'Atta 5kg', 'Burgers'].map(tag => (
               <button 
                 key={tag}
                 onClick={() => { setQuery(tag); handleSearch(); }}
@@ -278,6 +316,11 @@ export default function App() {
                       {idx === 0 && (
                         <div className="absolute -top-3 left-4 bg-indigo-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1">
                           <Zap size={10} fill="currentColor" /> Best Deal
+                        </div>
+                      )}
+                      {product.isReal && (
+                        <div className="absolute -top-3 right-4 bg-emerald-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1">
+                          <CheckCircle2 size={10} fill="currentColor" /> Live Price
                         </div>
                       )}
                       
